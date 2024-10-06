@@ -1,0 +1,392 @@
+---
+title: "IDS_Project Group 4"
+output: html_document
+author: "Group 4: Vinay, Teera, Tharuni, Sudhanshu 
+---
+```{r}
+# Packages
+library(arrow)
+library(tidyverse)
+library(ggplot2)
+library(readr)
+library(caret)
+library(e1071)
+library(lightgbm)
+library(data.table)
+
+print("All packages loaded")
+
+```
+
+```{r}
+# Importing Data
+house <- read_parquet("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/static_house_info.parquet")
+combined_data <- read_csv("/Users/vinaykumarc/combined_house_data.csv")
+energy_data <- combined_data
+# str(distinct(combined_data))
+# Merge energy_data with house data
+energy_data <- merge(x = energy_data, y = house, by.x = "building_id", by.y = "bldg_id")
+# View(energy_data)
+
+# Calculate total energy consumption
+energy_consumption <- rowSums(energy_data[, 3:44])
+
+# Create data frame with energy information
+eng <- data.frame(
+  energy_data[, 1:2],
+  energy_consumption,
+  energy_data[, 45:221]
+)
+
+# Display the structure of eng
+#str(eng)
+```
+```{r}
+# Data Cleaning 
+unique(eng$in.geometry_wall_type)
+# Convert 'applicability' column to factor
+eng[, "applicability"] <- as.factor(eng[, "applicability"])
+
+# Convert character columns to factor
+for (i in 1:ncol(eng)) {
+  if (is.character(eng[, i])) {
+    eng[, i] <- as.factor(eng[, i])
+  }
+}
+
+# Check and filter columns with more than one level
+x <- length(levels(eng[, 1])) != 1
+for (i in 2:ncol(eng)) {
+  if (is.factor(eng[, i])) {
+    x <- append(x, length(levels(eng[, i])) != 1)
+  } else {
+    x <- append(x, length(unique(eng[, i])) != 1)
+  }
+}
+
+cleandf <- eng[, x]
+clean <- eng[,x]
+summary(cleandf$Dry.Bulb.Temperature...C.)
+
+# Apply asinh transformation to numeric columns
+for (i in 1:ncol(cleandf)) {
+  if (is.numeric(cleandf[, i])) {
+    cleandf[, i] <- asinh(cleandf[, i])
+  }
+}
+# View summary of energy_consumption column in cleandf
+summary(cleandf$energy_consumption)
+```
+```{r}
+# Exploratory Data Analysis and Visualization
+
+# Plot energy_consumption against Relative Humidity
+plot(cleandf$energy_consumption, cleandf$Dry.Bulb.Temperature...C.)
+```
+
+
+```{r}
+# Boxplot of energy_consumption grouped by in.cooling_setpoint
+ggplot(clean, aes(x = in.cooling_setpoint , y = energy_consumption, fill =in.cooling_setpoint)) +
+      geom_boxplot(outlier.shape = NA)+ 
+      theme(legend.position = "none",axis.text = element_text(size = 12), axis.title = element_text(size = 12),plot.title = element_text(size = 14, face = "bold")) +  # Tilting the x-axis labels
+      labs(title = "Cooling Set Points",x="Cooling Set Points", y ="Energy Consumption (kWh)") + coord_cartesian(ylim = c(0, 5))
+```
+
+
+```{r}
+ggplot(clean, aes(x = in.heating_setpoint , y = energy_consumption, fill =in.heating_setpoint)) +
+      geom_boxplot(outlier.shape = NA)+ 
+      theme(legend.position = "none",axis.text = element_text(size = 12), axis.title = element_text(size = 12),plot.title = element_text(size = 14, face = "bold")) +  # Tilting the x-axis labels
+      labs(title = "Heating Set Points", x="Heating Set Points", y ="Energy Consumption (kWh)") + coord_cartesian(ylim = c(0, 5))
+```
+
+
+```{r}
+# Bar plot of energy_consumption by in.city using ggplot2
+ggplot(clean, aes(x = in.weather_file_city, y = energy_consumption))+
+  geom_bar(stat = "summary", fun = "mean", fill = "salmon")+
+  labs(title = "Bar Plot between Cities and Energy Consumption",
+       x = "Cities", y = "Energy Consumption")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+ggplot(clean, aes(x = hour , y = energy_consumption)) +
+  geom_bar(stat = "summary", fun = "mean", fill = "skyblue")+
+  labs(title = "Bar Plot Average Energy Consumption for each hour",
+       x = "hour", y = "Energy Consumption") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+ggplot(clean, aes(x =in.cooking_range, y = energy_consumption, fill =in.cooking_range)) +
+      geom_boxplot(outlier.shape = NA)+ 
+      theme(axis.text.x = element_text(angle = 25,hjust = 1),legend.position = "none",axis.text = element_text(size = 10), axis.title = element_text(size = 12),plot.title = element_text(size = 14, face = "bold")) +  
+      labs(title = "Cooking Range", x="Cooking Range", y ="Energy Consumption (kWh)") + coord_cartesian(ylim = c(0, 5))
+```
+```{r}
+ggplot(clean, aes(x = in.insulation_wall, y = energy_consumption, fill =in.insulation_wall)) +
+      geom_boxplot(outlier.shape = NA)+ 
+      theme(axis.text.x = element_text(angle = 55,hjust = 1),legend.position = "none",axis.text = element_text(size = 10), axis.title = element_text(size = 12),plot.title = element_text(size = 14, face = "bold")) +  # Tilting the x-axis labels
+      labs(title = "Types of Wall Insulation", x="Types of Wall Insulation", y ="Energy Consumption (kWh)") + coord_cartesian(ylim = c(0, 3.5))
+```
+
+
+```{r}
+ggplot(clean, aes(x = in.lighting, y = energy_consumption, fill =in.lighting))  +
+      geom_boxplot(outlier.shape = NA)+ 
+      theme(legend.position = "none",axis.text = element_text(size = 12), axis.title = element_text(size = 12),plot.title = element_text(size = 14, face = "bold")) +  
+      labs(title = "Types of Lighting",x="Types of Lighting", y ="Energy Consumption (kWh)") + coord_cartesian(ylim = c(0, 3))
+```
+
+# Don't run this if would take a lot of time
+
+```{r}
+# Don't run this if would take a lot of time
+# Feature Selection
+fit <- train(energy_consumption ~ ., data = cleandf, method = "lm")
+summary(fit)
+
+significant_features <- varImp(fit, scale = FALSE)
+sig <- significant_features$importance
+sig$features <- rownames(sig)
+sig <- sig[order(-sig$Overall),]
+
+# Write the significant features to a CSV file
+#write.csv(sig, file = "final_significant_features.csv", row.names = FALSE)
+
+# Read the significant features from the CSV file
+sig <- read_csv("/Users/vinaykumarc/significant_updated.csv")
+
+# View the significant features
+View(sig)
+```
+# modelling for the significant features
+
+```{r}
+columnsdf <- c(
+  "in.heating_setpoint", "Dry.Bulb.Temperature...C.", "in.lighting",
+  "in.misc_pool", "in.misc_hot_tub_spa", "in.occupants",
+  "in.cooling_setpoint", "in.cooling_setpoint_offset_magnitude",
+  "in.misc_gas_fireplace", "in.window_areas", "in.income",
+  "in.misc_freezer", "Global.Horizontal.Radiation..W.m2.",
+  "in.misc_pool_heater", "in.sqft", "in.cooking_range", "Direct.Normal.Radiation..W.m2.",
+  "Wind.Speed..m.s.", "in.cooling_setpoint_offset_period", "in.geometry_foundation_type",
+  "in.misc_gas_grill", "in.misc_well_pump", "in.ducts", "in.insulation_wall",
+  "in.hot_water_fixtures", "in.misc_extra_refrigerator", "energy_consumption"
+)
+x <- cleandf[, columnsdf]
+#View(x)
+```
+
+# train test split
+
+```{r}
+library(caret)
+set.seed(2701) 
+training <- createDataPartition(x$energy_consumption, p = 0.7, list = FALSE)
+train_data <- x[training, ]
+test_data <- x[-training, ]
+```
+
+# linear model
+
+```{r}
+
+# Train the linear regression model
+lm_model <- train(energy_consumption ~ ., data = train_data, method = "lm")
+
+# Summary of the linear regression model
+summary(lm_model)
+
+saveRDS(lm_model, file = "lm_model.rds")
+# Make predictions on the test data
+predictions <- predict(lm_model, test_data)
+test_actual <- test_data$energy_consumption
+
+# Calculate RMSE
+rmse <- sqrt(mean((predictions - test_actual)^2))
+print(paste("RMSE:", rmse))
+
+# Calculate R-squared
+r_squared <- 1 - (sum((test_actual - predictions)^2) / sum((test_actual - mean(test_actual))^2))
+print(paste("R-squared:", r_squared))
+```
+
+# Support Vector Regression Model Don't run this model ever it will take 2 hours to train
+
+```{r}
+# Fit SVM model
+svr_model <- svm(
+  energy_consumption ~ ., 
+  data = train_data,
+  type = "eps-regression", 
+  kernel = "radial"
+)
+
+# Summary of the SVM model
+summary(svr_model)
+print(paste("RMSE:", rmse))
+print(paste("R_Squared:",r_squared))
+# Save the SVM model
+saveRDS(svr_model, file = "svm_model.rds")
+```
+
+
+```{r}
+# Load the SVM model
+svr_model <- readRDS("/Users/vinaykumarc/Desktop/Syracuse University/IST 687 IDS/Project/svm_model.rds")
+coefficients <- t(svr_model$coefs) %*% svr_model$SV
+coefficient <- melt(coefficients)
+View(coefficient[order((coefficient$value)),])
+# Predictions
+#predictions <- predict(svr_model, test_data)
+#test_actual <- test_data$energy_consumption
+# Calculate RMSE
+rmse <- sqrt(mean((predictions - test_actual)^2))
+print(paste("RMSE:", rmse))
+
+# Calculate R-squared
+residuals <- test_actual - predictions
+ss_res <- sum(residuals^2)
+ss_tot <- sum((test_actual - mean(test_actual))^2)
+r_squared <- 1 - (ss_res / ss_tot)
+r_squared
+```
+
+# LightGBM Model
+
+```{r}
+
+dtrain <- lgb.Dataset(data = as.matrix(train_data[, -ncol(train_data)]),
+                      label = train_data$energy_consumption)
+params <- list(
+  objective = "regression",
+  metric = "rmse",
+  num_leaves = 100,
+  learning_rate = 0.9,
+  n_estimators = 100
+)
+lgbm_model <- lgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  valids = list(test = dtrain),
+  early_stopping_rounds = 30,
+  verbose = 1
+)
+
+test_predictions <- predict(lgbm_model, as.matrix(test_data[, -27]))
+
+# Calculating RMSE
+test_actuals <- test_data$energy_consumption
+rmse <- sqrt(mean((test_predictions - test_actuals)^2))
+print(paste("RMSE on test data:", rmse))
+```
+
+# creating a data set for next summer if the temperature is 5 degrees warmer
+
+```{r}
+next_summer_df <- x
+next_summer_df$Dry.Bulb.Temperature...C. <- asinh(sinh(next_summer_df$Dry.Bulb.Temperature...C.) + 5)
+View(next_summer_df)
+```
+
+# selecting significant features for predicting
+
+```{r}
+prediction_df <- next_summer_df[,columnsdf]
+predicted_eng_comp <- predict(svr_model, newdata =  prediction_df)
+prediction_df$predicted_eng_comp <- sinh(predicted_eng_comp)
+summary(prediction_df$predicted_eng_comp)
+View(prediction_df)
+```
+
+
+```{r}
+#write.csv(prediction_df,"final_predicted_df.csv",row.names = FALSE)
+difference_eng_comp <- prediction_df[,27:28]
+boxplot((difference_eng_comp$energy_consumption),(difference_eng_comp$predicted_eng_comp),
+        names = c("energy_consumption_for_2018", "predicted_eng_comp_for next year"),
+        ylab = "Values", col = c("cyan", "orchid"))
+```
+
+
+```{r}
+ggplot(difference_eng_comp, aes(x = clean$hour, y = predicted_eng_comp)) +
+  geom_bar(stat = "summary", fun = "sum", fill = "gold") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+propane_cooking_range <- prediction_df
+propane_cooking_range$in.cooking_range <- "Propane, 80% Usage"
+predicted_eng_comp <- predict(svr_model, newdata =  propane_cooking_range)
+propane_cooking_range$predicted_eng_comp_propane <- sinh(predicted_eng_comp)
+```
+
+
+
+```{r}
+difference_eng_comp$energy_consumption
+difference_eng_comp$eng_comp_propane <- propane_cooking_range$predicted_eng_comp_propane
+```
+
+
+```{r}
+boxplot((difference_eng_comp$predicted_eng_comp_propane),(difference_eng_comp$predicted_eng_comp),
+        names = c("eng_comp_for_propane_for_next_year", "eng_comp_for_next_year"),
+        ylab = "Values", col = c("cyan", "orchid"))
+```
+
+```{r}
+barplot(height = c(mean(difference_eng_comp$energy_consumption),
+                   mean(difference_eng_comp$predicted_eng_comp),
+                   mean(difference_eng_comp$eng_comp_propane)),
+  col = c("lightblue", "lightgreen","gold"),ylab = "Total Energy Consumption",
+  names.arg = c("energy_consumption","predicted_eng_comp","eng_comp_propane"))
+par(las = 1)
+```
+
+```{r}
+lighting_df <- propane_cooking_range
+lighting_df$in.lighting[lighting_df$in.lighting == "100% Incandescent" |
+                          lighting_df$in.lighting =="100% CFL"] <- "100% LED"
+predicted_eng_comp <- predict(svr_model, newdata =  lighting_df)
+lighting_df$eng_comp_lighting <- sinh(predicted_eng_comp)
+```
+
+```{r}
+difference_eng_comp$eng_comp_light_prop <- lighting_df$eng_comp_lighting
+```
+
+```{r}
+barplot(height = c(mean(difference_eng_comp$energy_consumption),
+                   mean(difference_eng_comp$predicted_eng_comp),
+                   mean(difference_eng_comp$eng_comp_propane),
+                   mean(difference_eng_comp$eng_comp_light_prop)),
+  col = c("lightblue", "lightgreen","gold"),ylab = "Total Energy Consumption",
+  names.arg = c("energy_consumption","predicted_eng_comp","eng_comp_propane","eng_comp_light_prop"))
+```
+```{r}
+insulation_df <- unique(lighting_df$in.insulation_wall)
+insulation_df$in.insulation_wall <- "CMU, 6-in Hollow, R-7"
+predicted_eng_comp <- predict(svr_model, newdata =  insulation_df)
+insulation_df$eng_comp_insulation <- sinh(predicted_eng_comp)
+difference_eng_comp$eng_comp_insulation <- insulation_df$eng_comp_insulation
+```
+
+```{r}
+difference_eng_comp <- Energy_Consumption_Difference
+barplot(height = c(mean(difference_eng_comp$energy_consumption),
+                   mean(difference_eng_comp$predicted_eng_comp),
+                   mean(difference_eng_comp$eng_comp_propane),
+                   mean(difference_eng_comp$eng_comp_light_prop),
+                   mean(difference_eng_comp$eng_comp_insulation)),
+  col = c("lightblue", "lightgreen","gold","tomato","violet"),ylab = "Total Energy Consumption",
+  names.arg = c("Energy Consumption","Predicted Eng Comp","Propane 80%",
+                "LED + Propane","LED + Propane + Insulation" ))
+```
+
